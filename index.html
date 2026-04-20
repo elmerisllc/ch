@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chess Attack Visualizer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      background: #1a1a2e;
+      color: #ddd;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 20px;
+      gap: 20px;
+    }
+
+    h1 {
+      color: #e8c96a;
+      font-size: 22px;
+      letter-spacing: 0.5px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      max-width: 650px;
+    }
+
+    #fen-input {
+      flex: 1;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-family: 'Courier New', monospace;
+      background: #0f1529;
+      border: 1px solid #3a3a5a;
+      border-radius: 6px;
+      color: #ddd;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #fen-input:focus { border-color: #e8c96a; }
+
+    #load-btn {
+      padding: 10px 20px;
+      background: #e8c96a;
+      color: #1a1a2e;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    #load-btn:hover { background: #f5d97a; }
+
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 72px);
+      grid-template-rows: repeat(8, 72px);
+      border: 3px solid #6a6a6a;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+    }
+
+    .cell {
+      width: 72px;
+      height: 72px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cell.light { background: #f0d9b5; }
+    .cell.dark  { background: #b58863; }
+
+    .piece {
+      font-size: 44px;
+      line-height: 1;
+      position: relative;
+      z-index: 3;
+      user-select: none;
+      pointer-events: none;
+    }
+    .piece.white-piece {
+      color: #ffffff;
+      -webkit-text-stroke: 0.4px #fff;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.15));
+    }
+    .piece.black-piece {
+      color: #111111;
+      -webkit-text-stroke: 0.4px #000;
+      filter: drop-shadow(0 1px 1px rgba(255,255,255,0.15));
+    }
+
+    .overlay {
+      position: absolute;
+      top: 0; left: 0;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .coord {
+      position: absolute;
+      font-size: 9px;
+      font-weight: 700;
+      z-index: 4;
+      pointer-events: none;
+    }
+    .cell.light .coord { color: rgba(80, 45, 10, 0.55); }
+    .cell.dark  .coord { color: rgba(240, 210, 160, 0.6); }
+    .rank-lbl { top: 3px; left: 4px; }
+    .file-lbl { bottom: 3px; right: 4px; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      font-size: 12px;
+      color: #aaa;
+      max-width: 650px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .legend-svg { width: 26px; height: 26px; }
+  </style>
+</head>
+<body>
+  <h1>Chess Attack Visualizer</h1>
+
+  <div class="controls">
+    <input id="fen-input" type="text"
+      value="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+      placeholder="Paste FEN notation here…">
+    <button id="load-btn" onclick="loadFEN()">Visualize</button>
+  </div>
+
+  <div id="board"></div>
+
+  <div class="legend">
+    <div class="legend-item">
+      <svg class="legend-svg" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13,13 L13,4 A9,9,0,0,1,22,13 Z" fill="rgba(255,255,255,0.15)" stroke="rgba(180,180,180,0.4)" stroke-width="0.8"/>
+        <path d="M13,13 L13,4 A9,9,0,0,1,22,13 Z" fill="rgba(255,255,255,0.85)" stroke="rgba(140,140,140,0.5)" stroke-width="0.5"/>
+      </svg>
+      White attacks — clockwise from top
+    </div>
+    <div class="legend-item">
+      <svg class="legend-svg" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13,13 L13,4 A9,9,0,0,0,4,13 Z" fill="rgba(0,0,0,0.10)" stroke="rgba(80,80,80,0.4)" stroke-width="0.8"/>
+        <path d="M13,13 L13,4 A9,9,0,0,0,4,13 Z" fill="rgba(15,15,15,0.82)" stroke="rgba(100,100,100,0.5)" stroke-width="0.5"/>
+      </svg>
+      Black attacks — counter-clockwise from top
+    </div>
+    <div class="legend-item" style="color:#666">
+      Ring = 8 segments per side · 1 segment = 1 attack · 4 attacks = quarter circle
+    </div>
+  </div>
+
+  <script>
+  'use strict';
+
+  const CS = 72; // cell size px
+  const R1 = CS * 0.455; // outer ring radius
+  const R2 = CS * 0.235; // inner ring radius
+  const SEG_DEG = 22.5;  // degrees per segment (180 / 8)
+
+  const FILES = 'abcdefgh';
+  const RANKS = '87654321';
+  const GLYPHS = {
+    K:'♚', Q:'♛', R:'♜', B:'♝', N:'♞', P:'♟',
+    k:'♚', q:'♛', r:'♜', b:'♝', n:'♞', p:'♟'
+  };
+
+  /* ── FEN parser ────────────────────────────────────────────────────── */
+  function parseFEN(fen) {
+    const pos = fen.trim().split(/\s+/)[0];
+    return pos.split('/').map(rank => {
+      const row = [];
+      for (const ch of rank) {
+        if (ch >= '1' && ch <= '8') {
+          for (let i = 0; i < +ch; i++) row.push(null);
+        } else {
+          row.push(ch);
+        }
+      }
+      return row;
+    });
+  }
+
+  /* ── Attack calculator ─────────────────────────────────────────────── */
+  function calcAttacks(board) {
+    const w = Array.from({length: 8}, () => new Array(8).fill(0));
+    const b = Array.from({length: 8}, () => new Array(8).fill(0));
+    const ok = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const pc = board[r][c];
+        if (!pc) continue;
+
+        // Uppercase = white piece
+        const isW = pc >= 'A' && pc <= 'Z';
+        const A = isW ? w : b;
+        const t = pc.toLowerCase();
+
+        if (t === 'p') {
+          // White pawns attack upward (r-1), black attack downward (r+1)
+          const d = isW ? -1 : 1;
+          if (ok(r + d, c - 1)) A[r + d][c - 1]++;
+          if (ok(r + d, c + 1)) A[r + d][c + 1]++;
+        }
+
+        if (t === 'n') {
+          for (const [dr, dc] of [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]) {
+            if (ok(r + dr, c + dc)) A[r + dr][c + dc]++;
+          }
+        }
+
+        if (t === 'b' || t === 'q') {
+          for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
+            for (let nr = r+dr, nc = c+dc; ok(nr, nc); nr += dr, nc += dc) {
+              A[nr][nc]++;
+              if (board[nr][nc]) break; // blocked by any piece
+            }
+          }
+        }
+
+        if (t === 'r' || t === 'q') {
+          for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+            for (let nr = r+dr, nc = c+dc; ok(nr, nc); nr += dr, nc += dc) {
+              A[nr][nc]++;
+              if (board[nr][nc]) break;
+            }
+          }
+        }
+
+        if (t === 'k') {
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              if ((dr || dc) && ok(r + dr, c + dc)) A[r + dr][c + dc]++;
+            }
+          }
+        }
+      }
+    }
+    return { w, b };
+  }
+
+  /* ── SVG geometry helpers ──────────────────────────────────────────── */
+
+  /**
+   * Convert polar coords (deg=0 → top, positive = clockwise) to SVG x/y.
+   */
+  function polar(cx, cy, r, deg) {
+    const rad = (deg - 90) * Math.PI / 180;
+    return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+  }
+
+  /**
+   * Build an SVG path for a ring (donut) arc segment.
+   * startDeg: 0 = top. sweepDeg: magnitude of sweep (0–180).
+   * cw: true = clockwise (white), false = counter-clockwise (black).
+   */
+  function ringArcPath(cx, cy, r1, r2, startDeg, sweepDeg, cw) {
+    if (sweepDeg <= 0) return '';
+    // Cap slightly below 180° to avoid degenerate identical-point arcs
+    const sweep = Math.min(sweepDeg, 179.9);
+    const endDeg = startDeg + (cw ? sweep : -sweep);
+
+    const [ox1, oy1] = polar(cx, cy, r1, startDeg);
+    const [ox2, oy2] = polar(cx, cy, r1, endDeg);
+    const [ix1, iy1] = polar(cx, cy, r2, startDeg);
+    const [ix2, iy2] = polar(cx, cy, r2, endDeg);
+
+    const largeArc = sweep > 180 ? 1 : 0;
+    const sf = cw ? 1 : 0;   // sweep flag for outer arc
+    const sf2 = cw ? 0 : 1;  // sweep flag for inner arc (reverse)
+    const f = n => n.toFixed(2);
+
+    // Outer arc forward, then inner arc backward to close the ring segment
+    return [
+      `M${f(ox1)} ${f(oy1)}`,
+      `A${r1} ${r1} 0 ${largeArc} ${sf} ${f(ox2)} ${f(oy2)}`,
+      `L${f(ix2)} ${f(iy2)}`,
+      `A${r2} ${r2} 0 ${largeArc} ${sf2} ${f(ix1)} ${f(iy1)}`,
+      'Z'
+    ].join(' ');
+  }
+
+  /* ── Per-cell SVG overlay ──────────────────────────────────────────── */
+  function makeCellSVG(wn, bn) {
+    const cx = CS / 2, cy = CS / 2;
+    const parts = [];
+    const f = n => n.toFixed(2);
+
+    // ── Ghost ring backgrounds (full semicircles, very dim) ──────────
+    const wGhost = ringArcPath(cx, cy, R1, R2, 0, 179.9, true);
+    const bGhost = ringArcPath(cx, cy, R1, R2, 0, 179.9, false);
+    parts.push(
+      `<path d="${wGhost}" fill="rgba(255,255,255,0.10)" stroke="rgba(200,200,200,0.35)" stroke-width="0.6"/>`,
+      `<path d="${bGhost}" fill="rgba(0,0,0,0.10)"       stroke="rgba(80,80,80,0.35)"    stroke-width="0.6"/>`
+    );
+
+    // ── Filled attack arcs ───────────────────────────────────────────
+    if (wn > 0) {
+      const path = ringArcPath(cx, cy, R1, R2, 0, Math.min(wn, 8) * SEG_DEG, true);
+      if (path) parts.push(`<path d="${path}" fill="rgba(255,255,255,0.82)" stroke="rgba(160,160,160,0.5)" stroke-width="0.5"/>`);
+    }
+    if (bn > 0) {
+      const path = ringArcPath(cx, cy, R1, R2, 0, Math.min(bn, 8) * SEG_DEG, false);
+      if (path) parts.push(`<path d="${path}" fill="rgba(15,15,15,0.80)" stroke="rgba(100,100,100,0.5)" stroke-width="0.5"/>`);
+    }
+
+    // ── Segment divider lines (drawn on top of fill) ─────────────────
+    // White (right) side: 0° → 180° in 22.5° steps (9 lines)
+    for (let i = 0; i <= 8; i++) {
+      const [x1, y1] = polar(cx, cy, R2, i * SEG_DEG);
+      const [x2, y2] = polar(cx, cy, R1, i * SEG_DEG);
+      parts.push(`<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}" stroke="rgba(130,130,130,0.55)" stroke-width="0.9"/>`);
+    }
+    // Black (left) side: −22.5° → −157.5° (7 lines, skip 0° & 180° already drawn)
+    for (let i = 1; i <= 7; i++) {
+      const [x1, y1] = polar(cx, cy, R2, -i * SEG_DEG);
+      const [x2, y2] = polar(cx, cy, R1, -i * SEG_DEG);
+      parts.push(`<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}" stroke="rgba(130,130,130,0.55)" stroke-width="0.9"/>`);
+    }
+
+    // ── Count labels at 3 o'clock (white) and 9 o'clock (black) ─────
+    const midR = (R1 + R2) / 2;
+    if (wn > 0) {
+      const [lx, ly] = polar(cx, cy, midR, 90); // 3 o'clock
+      parts.push(`<text x="${f(lx)}" y="${f(ly + 3.5)}" font-size="8.5" font-weight="bold" fill="#111" stroke="#fff" stroke-width="2" paint-order="stroke" text-anchor="middle" font-family="sans-serif">${wn}</text>`);
+    }
+    if (bn > 0) {
+      const [lx, ly] = polar(cx, cy, midR, -90); // 9 o'clock
+      parts.push(`<text x="${f(lx)}" y="${f(ly + 3.5)}" font-size="8.5" font-weight="bold" fill="#fff" stroke="#111" stroke-width="2" paint-order="stroke" text-anchor="middle" font-family="sans-serif">${bn}</text>`);
+    }
+
+    return `<svg class="overlay" width="${CS}" height="${CS}" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+  }
+
+  /* ── Board renderer ────────────────────────────────────────────────── */
+  function renderBoard(board, atk) {
+    const cells = [];
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const light = (r + c) % 2 === 0;
+        const pc    = board[r][c];
+        const wn    = atk.w[r][c];
+        const bn    = atk.b[r][c];
+        const sq    = `${FILES[c]}${RANKS[r]}`;
+
+        let html = `<div class="cell ${light ? 'light' : 'dark'}" title="${sq}: ♔${wn} ♚${bn}">`;
+
+        // Coordinate labels on border squares
+        if (c === 0) html += `<span class="coord rank-lbl">${RANKS[r]}</span>`;
+        if (r === 7) html += `<span class="coord file-lbl">${FILES[c]}</span>`;
+
+        // Attack ring overlay
+        html += makeCellSVG(wn, bn);
+
+        // Chess piece (rendered above the overlay via z-index)
+        if (pc) {
+          const cls = (pc >= 'A' && pc <= 'Z') ? 'piece white-piece' : 'piece black-piece';
+          html += `<span class="${cls}">${GLYPHS[pc] ?? pc}</span>`;
+        }
+
+        html += '</div>';
+        cells.push(html);
+      }
+    }
+    document.getElementById('board').innerHTML = cells.join('');
+  }
+
+  /* ── Entry point ───────────────────────────────────────────────────── */
+  function loadFEN() {
+    const fen = document.getElementById('fen-input').value.trim();
+    if (!fen) return;
+    try {
+      const board = parseFEN(fen);
+      const atk   = calcAttacks(board);
+      renderBoard(board, atk);
+    } catch (e) {
+      alert('Could not parse FEN: ' + e.message);
+    }
+  }
+
+  // Visualize starting position immediately
+  loadFEN();
+
+  // Also trigger on Enter key in the input
+  document.getElementById('fen-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') loadFEN();
+  });
+  </script>
+</body>
+</html>
