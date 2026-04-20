@@ -127,19 +127,77 @@
     }
     .legend-item { display: flex; align-items: center; gap: 7px; }
     .legend-svg { width: 26px; height: 26px; }
+
+    /* ── Interactive ── */
+    .cell { cursor: pointer; }
+    .cell.sel-source::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 3px solid #e8c96a;
+      box-shadow: inset 0 0 12px rgba(232,201,106,0.5);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* ── Palettes ── */
+    .palette-wrapper { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .palette-label { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: #666; }
+    .palette {
+      display: flex; gap: 4px; padding: 8px 10px;
+      background: #0f1529; border: 2px solid #2a2a4a;
+      border-radius: 8px; cursor: default;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .palette.drop-zone { border-color: #c0392b; box-shadow: 0 0 10px rgba(192,57,43,0.35); }
+    .palette-cell {
+      width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
+      background: #1a1a38; border: 2px solid transparent; border-radius: 6px;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+      user-select: none;
+    }
+    .palette-cell:hover { background: #252548; border-color: #4a4a7a; }
+    .palette-cell.selected { border-color: #e8c96a; background: #25251a; box-shadow: 0 0 10px rgba(232,201,106,0.45); }
+    .palette-cell .piece { font-size: 42px; pointer-events: none; }
+
+    /* ── Buttons ── */
+    button { padding: 9px 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 13px; white-space: nowrap; transition: background 0.15s, color 0.15s; }
+    .btn-primary { background: #e8c96a; color: #1a1a2e; }
+    .btn-primary:hover { background: #f5d97a; }
+    .btn-secondary { background: #2a2a4a; color: #ccc; border: 1px solid #3a3a5a; }
+    .btn-secondary:hover { background: #3a3a5a; }
+    #copy-btn { padding: 8px 11px; background: #1e1e3a; color: #aaa; border: 1px solid #3a3a5a; font-size: 17px; line-height: 1; flex-shrink: 0; }
+    #copy-btn:hover { background: #2e2e50; color: #e8c96a; }
+    #copy-btn.copied { color: #5fca5f !important; }
+    .hint { font-size: 11px; color: #555; text-align: center; }
   </style>
 </head>
 <body>
   <h1>Chess Attack Visualizer</h1>
 
-  <div class="controls">
-    <input id="fen-input" type="text"
-      value="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-      placeholder="Paste FEN notation here…">
-    <button id="load-btn" onclick="loadFEN()">Visualize</button>
+  <div class="controls" style="display:flex;flex-direction:column;gap:7px;width:100%;max-width:576px;">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <input id="fen-input" type="text" placeholder="Paste FEN notation here…" spellcheck="false"
+        style="flex:1;padding:9px 12px;font-size:12.5px;font-family:'Courier New',monospace;background:#0f1529;border:1px solid #3a3a5a;border-radius:6px;color:#ddd;outline:none;min-width:0;">
+      <button id="copy-btn" title="Copy FEN to clipboard">&#x29C9;</button>
+      <button id="load-btn" class="btn-primary">Visualize</button>
+      <button id="start-btn" class="btn-secondary">Start Pos</button>
+    </div>
+  </div>
+
+  <div class="palette-wrapper">
+    <div class="palette-label">Black pieces &mdash; click box to remove selected piece</div>
+    <div id="palette-black" class="palette"></div>
   </div>
 
   <div id="board"></div>
+
+  <div class="palette-wrapper">
+    <div class="palette-label">White pieces &mdash; click box to remove selected piece</div>
+    <div id="palette-white" class="palette"></div>
+  </div>
+
+  <div class="hint">Click a piece to select &bull; click a cell to move/place &bull; click palette box to remove &bull; Esc to cancel</div>
 
   <div class="legend">
     <div class="legend-item">
@@ -164,87 +222,80 @@
   <script>
   'use strict';
 
-  const CS = 72; // cell size px
-  const R1 = CS * 0.455; // outer ring radius
-  const R2 = CS * 0.235; // inner ring radius
-  const SEG_DEG = 22.5;  // degrees per segment (180 / 8)
-
+  const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const CS = 72;
+  const R1 = CS * 0.455;
+  const R2 = CS * 0.235;
+  const SEG_DEG = 22.5;
   const FILES = 'abcdefgh';
   const RANKS = '87654321';
+  const WHITE_PIECES = ['K','Q','R','B','N','P'];
+  const BLACK_PIECES = ['k','q','r','b','n','p'];
+  const PIECE_NAMES = { k:'King', q:'Queen', r:'Rook', b:'Bishop', n:'Knight', p:'Pawn' };
   const GLYPHS = {
     K:'♚', Q:'♛', R:'♜', B:'♝', N:'♞', P:'♟',
     k:'♚', q:'♛', r:'♜', b:'♝', n:'♞', p:'♟'
   };
 
-  /* ── FEN parser ────────────────────────────────────────────────────── */
+  let board = [];
+  let selected = null; // null | {source:'board',r,c} | {source:'palette',piece}
+
+  /* ── FEN helpers ── */
   function parseFEN(fen) {
     const pos = fen.trim().split(/\s+/)[0];
     return pos.split('/').map(rank => {
       const row = [];
       for (const ch of rank) {
-        if (ch >= '1' && ch <= '8') {
-          for (let i = 0; i < +ch; i++) row.push(null);
-        } else {
-          row.push(ch);
-        }
+        if (ch >= '1' && ch <= '8') for (let i = 0; i < +ch; i++) row.push(null);
+        else row.push(ch);
       }
       return row;
     });
   }
 
-  /* ── Attack calculator ─────────────────────────────────────────────── */
-  function calcAttacks(board) {
-    const w = Array.from({length: 8}, () => new Array(8).fill(0));
-    const b = Array.from({length: 8}, () => new Array(8).fill(0));
-    const ok = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+  function boardToFEN() {
+    return board.map(row => {
+      let s = '', e = 0;
+      for (const pc of row) {
+        if (!pc) { e++; } else { if (e) { s += e; e = 0; } s += pc; }
+      }
+      if (e) s += e;
+      return s;
+    }).join('/') + ' w KQkq - 0 1';
+  }
 
+  /* ── Attack calculator ── */
+  function calcAttacks() {
+    const w = Array.from({length:8}, () => new Array(8).fill(0));
+    const b = Array.from({length:8}, () => new Array(8).fill(0));
+    const ok = (r,c) => r >= 0 && r < 8 && c >= 0 && c < 8;
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
         const pc = board[r][c];
         if (!pc) continue;
-
-        // Uppercase = white piece
         const isW = pc >= 'A' && pc <= 'Z';
         const A = isW ? w : b;
         const t = pc.toLowerCase();
-
         if (t === 'p') {
-          // White pawns attack upward (r-1), black attack downward (r+1)
           const d = isW ? -1 : 1;
-          if (ok(r + d, c - 1)) A[r + d][c - 1]++;
-          if (ok(r + d, c + 1)) A[r + d][c + 1]++;
+          if (ok(r+d,c-1)) A[r+d][c-1]++;
+          if (ok(r+d,c+1)) A[r+d][c+1]++;
         }
-
         if (t === 'n') {
-          for (const [dr, dc] of [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]) {
-            if (ok(r + dr, c + dc)) A[r + dr][c + dc]++;
-          }
+          for (const [dr,dc] of [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]])
+            if (ok(r+dr,c+dc)) A[r+dr][c+dc]++;
         }
-
         if (t === 'b' || t === 'q') {
-          for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
-            for (let nr = r+dr, nc = c+dc; ok(nr, nc); nr += dr, nc += dc) {
-              A[nr][nc]++;
-              if (board[nr][nc]) break; // blocked by any piece
-            }
-          }
+          for (const [dr,dc] of [[-1,-1],[-1,1],[1,-1],[1,1]])
+            for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) { A[nr][nc]++; if (board[nr][nc]) break; }
         }
-
         if (t === 'r' || t === 'q') {
-          for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
-            for (let nr = r+dr, nc = c+dc; ok(nr, nc); nr += dr, nc += dc) {
-              A[nr][nc]++;
-              if (board[nr][nc]) break;
-            }
-          }
+          for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]])
+            for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) { A[nr][nc]++; if (board[nr][nc]) break; }
         }
-
         if (t === 'k') {
-          for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-              if ((dr || dc) && ok(r + dr, c + dc)) A[r + dr][c + dc]++;
-            }
-          }
+          for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++)
+            if ((dr||dc) && ok(r+dr,c+dc)) A[r+dr][c+dc]++;
         }
       }
     }
@@ -344,32 +395,31 @@
     return `<svg class="overlay" width="${CS}" height="${CS}" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
   }
 
-  /* ── Board renderer ────────────────────────────────────────────────── */
-  function renderBoard(board, atk) {
+  /* ── Render ── */
+  function render() {
+    const atk = calcAttacks();
+    const boardSel = selected?.source === 'board';
+
+    document.getElementById('fen-input').value = boardToFEN();
+    renderPalette('palette-black', BLACK_PIECES, boardSel);
+    renderPalette('palette-white', WHITE_PIECES, boardSel);
+
     const cells = [];
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
         const light = (r + c) % 2 === 0;
         const pc    = board[r][c];
-        const wn    = atk.w[r][c];
-        const bn    = atk.b[r][c];
-        const sq    = `${FILES[c]}${RANKS[r]}`;
-
-        let html = `<div class="cell ${light ? 'light' : 'dark'}" title="${sq}: ♔${wn} ♚${bn}">`;
-
-        // Coordinate labels on border squares
+        const isSel = boardSel && selected.r === r && selected.c === c;
+        const wn    = atk.w[r][c], bn = atk.b[r][c];
+        const sq    = FILES[c] + RANKS[r];
+        let html = `<div class="cell ${light?'light':'dark'}${isSel?' sel-source':''}" data-row="${r}" data-col="${c}" title="${sq}: W${wn} B${bn}">`;
         if (c === 0) html += `<span class="coord rank-lbl">${RANKS[r]}</span>`;
         if (r === 7) html += `<span class="coord file-lbl">${FILES[c]}</span>`;
-
-        // Attack ring overlay
         html += makeCellSVG(wn, bn);
-
-        // Chess piece (rendered above the overlay via z-index)
         if (pc) {
           const cls = (pc >= 'A' && pc <= 'Z') ? 'piece white-piece' : 'piece black-piece';
-          html += `<span class="${cls}">${GLYPHS[pc] ?? pc}</span>`;
+          html += `<span class="${cls}">${GLYPHS[pc]}</span>`;
         }
-
         html += '</div>';
         cells.push(html);
       }
@@ -377,26 +427,107 @@
     document.getElementById('board').innerHTML = cells.join('');
   }
 
-  /* ── Entry point ───────────────────────────────────────────────────── */
+  function renderPalette(id, pieces, isDropZone) {
+    const el = document.getElementById(id);
+    el.classList.toggle('drop-zone', isDropZone);
+    el.innerHTML = pieces.map(pc => {
+      const isSel = selected?.source === 'palette' && selected.piece === pc;
+      const isW = pc >= 'A' && pc <= 'Z';
+      const cls = isW ? 'piece white-piece' : 'piece black-piece';
+      const label = (isW ? 'White ' : 'Black ') + (PIECE_NAMES[pc.toLowerCase()] ?? pc);
+      return `<div class="palette-cell${isSel?' selected':''}" data-piece="${pc}" title="${label}"><span class="${cls}">${GLYPHS[pc]}</span></div>`;
+    }).join('');
+  }
+
+  /* ── Click handling ── */
+  document.addEventListener('click', e => {
+    const cellEl  = e.target.closest('[data-row]');
+    const pieceEl = e.target.closest('[data-piece]');
+    const palEl   = e.target.closest('.palette');
+    if (cellEl) {
+      handleBoardClick(+cellEl.dataset.row, +cellEl.dataset.col);
+    } else if (pieceEl) {
+      handlePaletteClick(pieceEl.dataset.piece);
+    } else if (palEl) {
+      if (selected?.source === 'board') {
+        board[selected.r][selected.c] = null;
+        selected = null;
+        render();
+      }
+    }
+  });
+
+  function handleBoardClick(r, c) {
+    if (!selected) {
+      if (board[r][c]) { selected = { source:'board', r, c }; render(); }
+    } else if (selected.source === 'board') {
+      if (selected.r === r && selected.c === c) {
+        selected = null;
+      } else {
+        const piece = board[selected.r][selected.c];
+        board[selected.r][selected.c] = null;
+        board[r][c] = piece;
+        selected = null;
+      }
+      render();
+    } else {
+      board[r][c] = selected.piece;
+      render();
+    }
+  }
+
+  function handlePaletteClick(piece) {
+    if (selected?.source === 'board') {
+      board[selected.r][selected.c] = null;
+      selected = { source:'palette', piece };
+    } else if (selected?.source === 'palette' && selected.piece === piece) {
+      selected = null;
+    } else {
+      selected = { source:'palette', piece };
+    }
+    render();
+  }
+
+  /* ── Buttons ── */
   function loadFEN() {
     const fen = document.getElementById('fen-input').value.trim();
     if (!fen) return;
     try {
-      const board = parseFEN(fen);
-      const atk   = calcAttacks(board);
-      renderBoard(board, atk);
+      board = parseFEN(fen);
+      selected = null;
+      render();
     } catch (e) {
       alert('Could not parse FEN: ' + e.message);
     }
   }
 
-  // Visualize starting position immediately
-  loadFEN();
+  function loadStarting() {
+    board = parseFEN(STARTING_FEN);
+    selected = null;
+    render();
+  }
 
-  // Also trigger on Enter key in the input
-  document.getElementById('fen-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') loadFEN();
+  document.getElementById('load-btn').addEventListener('click', loadFEN);
+  document.getElementById('start-btn').addEventListener('click', loadStarting);
+  document.getElementById('fen-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadFEN(); });
+
+  document.getElementById('copy-btn').addEventListener('click', () => {
+    const fen = document.getElementById('fen-input').value;
+    const btn = document.getElementById('copy-btn');
+    navigator.clipboard.writeText(fen).then(() => {
+      btn.textContent = '\u2713';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '\u29C9'; btn.classList.remove('copied'); }, 1400);
+    }).catch(() => { document.getElementById('fen-input').select(); document.execCommand('copy'); });
   });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && selected) { selected = null; render(); }
+  });
+
+  /* ── Init ── */
+  board = parseFEN(STARTING_FEN);
+  render();
   </script>
 </body>
 </html>
