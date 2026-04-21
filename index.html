@@ -95,14 +95,11 @@
       font-variant-emoji: text;
     }
     .piece.white-piece {
-      color: #ffffff;
-      -webkit-text-stroke: 0.4px #fff;
-      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.15));
+      filter: invert(1);
     }
     .piece.black-piece {
       color: #111111;
-      -webkit-text-stroke: 0.4px #000;
-      filter: drop-shadow(0 1px 1px rgba(255,255,255,0.15));
+      filter: drop-shadow(0 1px 1px rgba(255,255,255,0.10));
     }
 
     .overlay {
@@ -127,17 +124,15 @@
     /* ── Chess area scaling ── */
     #chess-wrap {
       width: 100%;
-      display: flex;
-      justify-content: center;
       overflow: hidden;
     }
     #chess-area {
-      flex-shrink: 0;
+      width: 582px; /* 8×72px board + 2×3px border */
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 20px;
-      transform-origin: top center;
+      transform-origin: top left;
     }
 
     .legend {
@@ -764,15 +759,22 @@
   function scaleChess() {
     const area = document.getElementById('chess-area');
     const wrap = document.getElementById('chess-wrap');
-    if (!area) return;
-    // Reset scale to measure natural size
+    if (!area || !wrap) return;
+    // Reset to natural size for measurement
     area.style.transform = '';
-    const naturalW = 582; // board (576px) + border (3px × 2)
-    const available = window.innerWidth - 32; // 16px padding each side
-    const s = Math.min(1, available / naturalW);
-    area.style.transform = s < 1 ? `scale(${s})` : '';
-    // Shrink wrapper height so there's no dead space below the scaled element
-    wrap.style.height = s < 1 ? `${area.scrollHeight * s}px` : '';
+    area.style.marginLeft = '';
+    wrap.style.height = '';
+    void area.offsetHeight; // force reflow before measuring
+    const naturalW = 582; // 8×72 + 2×3px border
+    const wrapW = wrap.clientWidth;
+    const s = Math.min(1, wrapW / naturalW);
+    // Center: on mobile s≈1 so scaled width≈wrapW → marginLeft≈0;
+    // on desktop wrapW>naturalW so we center with positive margin
+    area.style.marginLeft = `${Math.max(0, (wrapW - naturalW * s) / 2)}px`;
+    if (s < 1) {
+      area.style.transform = `scale(${s})`;
+      wrap.style.height = `${area.scrollHeight * s}px`;
+    }
   }
   window.addEventListener('resize', scaleChess);
 
