@@ -200,6 +200,31 @@
     }
     /* don't double-render sel-source + hover-target */
     .cell.sel-source.hover-target::after { box-shadow: inset 0 0 0 3px #e8c96a; }
+
+    /* ── Move target dots and capture rings ── */
+    .cell.move-target-white::before,
+    .cell.move-target-black::before {
+      content: '';
+      position: absolute;
+      width: 36%; height: 36%;
+      top: 32%; left: 32%;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 6;
+    }
+    .cell.move-target-white::before { background: rgba(255,255,255,0.50); }
+    .cell.move-target-black::before { background: rgba(0,0,0,0.50); }
+    .cell.move-capture-white::before,
+    .cell.move-capture-black::before {
+      content: '';
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 6;
+    }
+    .cell.move-capture-white::before { box-shadow: inset 0 0 0 5px rgba(255,255,255,0.55); }
+    .cell.move-capture-black::before { box-shadow: inset 0 0 0 5px rgba(0,0,0,0.55); }
   </style>
 </head>
 <body>
@@ -295,12 +320,15 @@
   }
 
   /* ── Attack calculator ── */
-  function calcAttacks() {
+  // exR/exC: square of the "lifted" piece to exclude from both attack counts and ray-blocking
+  function calcAttacks(exR = -1, exC = -1) {
     const w = Array.from({length:8}, () => new Array(8).fill(0));
     const b = Array.from({length:8}, () => new Array(8).fill(0));
     const ok = (r,c) => r >= 0 && r < 8 && c >= 0 && c < 8;
+    const isEx = (r,c) => r === exR && c === exC;
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
+        if (isEx(r, c)) continue; // lifted piece contributes no attacks
         const pc = board[r][c];
         if (!pc) continue;
         const isW = pc >= 'A' && pc <= 'Z';
@@ -317,11 +345,11 @@
         }
         if (t === 'b' || t === 'q') {
           for (const [dr,dc] of [[-1,-1],[-1,1],[1,-1],[1,1]])
-            for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) { A[nr][nc]++; if (board[nr][nc]) break; }
+            for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) { A[nr][nc]++; if (board[nr][nc] && !isEx(nr,nc)) break; }
         }
         if (t === 'r' || t === 'q') {
           for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]])
-            for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) { A[nr][nc]++; if (board[nr][nc]) break; }
+            for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) { A[nr][nc]++; if (board[nr][nc] && !isEx(nr,nc)) break; }
         }
         if (t === 'k') {
           for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++)
@@ -427,7 +455,9 @@
 
   /* ── Render ── */
   function render() {
-    const atk = calcAttacks();
+    const exR = selected?.source === 'board' ? selected.r : -1;
+    const exC = selected?.source === 'board' ? selected.c : -1;
+    const atk = calcAttacks(exR, exC);
     const boardSel = selected?.source === 'board';
 
     document.getElementById('fen-input').value = boardToFEN();
@@ -455,6 +485,7 @@
       }
     }
     document.getElementById('board').innerHTML = cells.join('');
+    applySelectionOverlays();
   }
 
   function renderPalette(id, pieces, isDropZone) {
@@ -555,6 +586,61 @@
     if (e.key === 'Escape' && selected) { selected = null; render(); }
   });
 
+  /* ── Legal move generator (pseudo-legal, no check validation) ── */
+  function getLegalMoves(r, c) {
+    const pc = board[r][c];
+    if (!pc) return [];
+    const isW = pc >= 'A' && pc <= 'Z';
+    const t = pc.toLowerCase();
+    const ok = (nr,nc) => nr >= 0 && nr < 8 && nc >= 0 && nc < 8;
+    const isEmpty = (nr,nc) => !board[nr][nc];
+    const isEnemy = (nr,nc) => board[nr][nc] && ((board[nr][nc] >= 'A' && board[nr][nc] <= 'Z') !== isW);
+    const moves = [];
+    const add = (nr,nc) => moves.push({ r: nr, c: nc, capture: !!board[nr][nc] });
+
+    if (t === 'p') {
+      const d = isW ? -1 : 1;
+      const startRank = isW ? 6 : 1;
+      if (ok(r+d, c) && isEmpty(r+d, c)) {
+        add(r+d, c);
+        if (r === startRank && ok(r+2*d, c) && isEmpty(r+2*d, c)) add(r+2*d, c);
+      }
+      for (const dc of [-1, 1]) if (ok(r+d, c+dc) && isEnemy(r+d, c+dc)) add(r+d, c+dc);
+    } else if (t === 'n') {
+      for (const [dr,dc] of [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]])
+        if (ok(r+dr,c+dc) && (isEmpty(r+dr,c+dc) || isEnemy(r+dr,c+dc))) add(r+dr,c+dc);
+    } else if (t === 'k') {
+      for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++)
+        if ((dr||dc) && ok(r+dr,c+dc) && (isEmpty(r+dr,c+dc) || isEnemy(r+dr,c+dc))) add(r+dr,c+dc);
+    } else {
+      const dirs = [];
+      if (t === 'b' || t === 'q') dirs.push([-1,-1],[-1,1],[1,-1],[1,1]);
+      if (t === 'r' || t === 'q') dirs.push([-1,0],[1,0],[0,-1],[0,1]);
+      for (const [dr,dc] of dirs) {
+        for (let nr=r+dr,nc=c+dc; ok(nr,nc); nr+=dr,nc+=dc) {
+          if (isEmpty(nr,nc)) { add(nr,nc); }
+          else { if (isEnemy(nr,nc)) add(nr,nc); break; }
+        }
+      }
+    }
+    return moves;
+  }
+
+  /* ── Persist move overlays for the selected board piece after render ── */
+  function applySelectionOverlays() {
+    if (selected?.source !== 'board') return;
+    const { r, c } = selected;
+    const pc = board[r][c];
+    if (!pc) return;
+    const isW = pc >= 'A' && pc <= 'Z';
+    const capCls  = isW ? 'move-capture-white' : 'move-capture-black';
+    const moveCls = isW ? 'move-target-white'  : 'move-target-black';
+    for (const { r: nr, c: nc, capture } of getLegalMoves(r, c)) {
+      const el = document.querySelector(`[data-row="${nr}"][data-col="${nc}"]`);
+      if (el) el.classList.add(capture ? capCls : moveCls);
+    }
+  }
+
   /* ── Attacker finder ── */
   // Returns array of {r,c} for every piece on the board that attacks square (tr,tc)
   function findAttackers(tr, tc) {
@@ -608,24 +694,41 @@
 
   /* ── Hover highlighting ── */
   function clearHoverHighlights() {
-    document.querySelectorAll('.attacker-white,.attacker-black,.hover-target')
-      .forEach(el => el.classList.remove('attacker-white','attacker-black','hover-target'));
+    document.querySelectorAll(
+      '.attacker-white,.attacker-black,.hover-target,.move-target-white,.move-target-black,.move-capture-white,.move-capture-black'
+    ).forEach(el => el.classList.remove(
+      'attacker-white','attacker-black','hover-target',
+      'move-target-white','move-target-black','move-capture-white','move-capture-black'
+    ));
   }
 
   document.getElementById('board').addEventListener('mouseover', e => {
     const cellEl = e.target.closest('[data-row]');
     if (!cellEl) return;
+    if (selected) return; // selection overlays are shown persistently via applySelectionOverlays
     clearHoverHighlights();
     const tr = +cellEl.dataset.row, tc = +cellEl.dataset.col;
     cellEl.classList.add('hover-target');
-    for (const { r, c, isW } of findAttackers(tr, tc)) {
-      const el = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
-      if (el) el.classList.add(isW ? 'attacker-white' : 'attacker-black');
+    if (board[tr][tc]) {
+      // Hovering a piece — show its legal moves
+      const isW = board[tr][tc] >= 'A' && board[tr][tc] <= 'Z';
+      const capCls  = isW ? 'move-capture-white' : 'move-capture-black';
+      const moveCls = isW ? 'move-target-white'  : 'move-target-black';
+      for (const { r, c, capture } of getLegalMoves(tr, tc)) {
+        const el = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+        if (el) el.classList.add(capture ? capCls : moveCls);
+      }
+    } else {
+      // Hovering empty cell — show which pieces attack it
+      for (const { r, c, isW } of findAttackers(tr, tc)) {
+        const el = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+        if (el) el.classList.add(isW ? 'attacker-white' : 'attacker-black');
+      }
     }
   });
 
   document.getElementById('board').addEventListener('mouseleave', () => {
-    clearHoverHighlights();
+    if (!selected) clearHoverHighlights();
   });
 
   /* ── Init ── */
