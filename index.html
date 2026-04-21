@@ -92,6 +92,7 @@
       z-index: 3;
       user-select: none;
       pointer-events: none;
+      font-variant-emoji: text;
     }
     .piece.white-piece {
       color: #ffffff;
@@ -315,8 +316,8 @@
   const BLACK_PIECES = ['k','q','r','b','n','p'];
   const PIECE_NAMES = { k:'King', q:'Queen', r:'Rook', b:'Bishop', n:'Knight', p:'Pawn' };
   const GLYPHS = {
-    K:'♚', Q:'♛', R:'♜', B:'♝', N:'♞', P:'♟',
-    k:'♚', q:'♛', r:'♜', b:'♝', n:'♞', p:'♟'
+    K:'♚︎', Q:'♛︎', R:'♜︎', B:'♝︎', N:'♞︎', P:'♟︎',
+    k:'♚︎', q:'♛︎', r:'♜︎', b:'♝︎', n:'♞︎', p:'♟︎'
   };
 
   let board = [];
