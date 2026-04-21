@@ -15,7 +15,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 28px 20px;
+      padding: 28px 16px;
       gap: 20px;
     }
 
@@ -29,8 +29,15 @@
       display: flex;
       gap: 8px;
       width: 100%;
-      max-width: 650px;
+      max-width: 576px;
     }
+    .controls-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .controls-row #fen-input { flex: 1; min-width: 120px; }
 
     #fen-input {
       flex: 1;
@@ -116,6 +123,22 @@
     .rank-lbl { top: 3px; left: 4px; }
     .file-lbl { bottom: 3px; right: 4px; }
 
+    /* ── Chess area scaling ── */
+    #chess-wrap {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      overflow: hidden;
+    }
+    #chess-area {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      transform-origin: top center;
+    }
+
     .legend {
       display: flex;
       flex-wrap: wrap;
@@ -123,7 +146,7 @@
       gap: 20px;
       font-size: 12px;
       color: #aaa;
-      max-width: 650px;
+      max-width: 576px;
     }
     .legend-item { display: flex; align-items: center; gap: 7px; }
     .legend-svg { width: 26px; height: 26px; }
@@ -230,29 +253,33 @@
 <body>
   <h1>Chess Attack Visualizer</h1>
 
-  <div class="controls" style="display:flex;flex-direction:column;gap:7px;width:100%;max-width:576px;">
-    <div style="display:flex;gap:6px;align-items:center;">
+  <div class="controls">
+    <div class="controls-row">
       <input id="fen-input" type="text" placeholder="Paste FEN notation here…" spellcheck="false"
-        style="flex:1;padding:9px 12px;font-size:12.5px;font-family:'Courier New',monospace;background:#0f1529;border:1px solid #3a3a5a;border-radius:6px;color:#ddd;outline:none;min-width:0;">
+        style="padding:9px 12px;font-size:12.5px;font-family:'Courier New',monospace;background:#0f1529;border:1px solid #3a3a5a;border-radius:6px;color:#ddd;outline:none;">
       <button id="copy-btn" title="Copy FEN to clipboard">&#x29C9;</button>
       <button id="load-btn" class="btn-primary">Visualize</button>
       <button id="start-btn" class="btn-secondary">Start Pos</button>
     </div>
   </div>
 
-  <div class="palette-wrapper">
-    <div class="palette-label">Black pieces &mdash; click box to remove selected piece</div>
-    <div id="palette-black" class="palette"></div>
+  <div id="chess-wrap">
+    <div id="chess-area">
+      <div class="palette-wrapper">
+        <div class="palette-label">Black pieces &mdash; click box to remove selected piece</div>
+        <div id="palette-black" class="palette"></div>
+      </div>
+
+      <div id="board"></div>
+
+      <div class="palette-wrapper">
+        <div class="palette-label">White pieces &mdash; click box to remove selected piece</div>
+        <div id="palette-white" class="palette"></div>
+      </div>
+
+      <div class="hint">Click a piece to select &bull; click a cell to move/place &bull; click palette box to remove &bull; Esc to cancel</div>
+    </div>
   </div>
-
-  <div id="board"></div>
-
-  <div class="palette-wrapper">
-    <div class="palette-label">White pieces &mdash; click box to remove selected piece</div>
-    <div id="palette-white" class="palette"></div>
-  </div>
-
-  <div class="hint">Click a piece to select &bull; click a cell to move/place &bull; click palette box to remove &bull; Esc to cancel</div>
 
   <div class="legend">
     <div class="legend-item">
@@ -486,6 +513,7 @@
     }
     document.getElementById('board').innerHTML = cells.join('');
     applySelectionOverlays();
+    scaleChess();
   }
 
   function renderPalette(id, pieces, isDropZone) {
@@ -731,9 +759,26 @@
     if (!selected) clearHoverHighlights();
   });
 
+  /* ── Mobile scaling ── */
+  function scaleChess() {
+    const area = document.getElementById('chess-area');
+    const wrap = document.getElementById('chess-wrap');
+    if (!area) return;
+    // Reset scale to measure natural size
+    area.style.transform = '';
+    const naturalW = 582; // board (576px) + border (3px × 2)
+    const available = window.innerWidth - 32; // 16px padding each side
+    const s = Math.min(1, available / naturalW);
+    area.style.transform = s < 1 ? `scale(${s})` : '';
+    // Shrink wrapper height so there's no dead space below the scaled element
+    wrap.style.height = s < 1 ? `${area.scrollHeight * s}px` : '';
+  }
+  window.addEventListener('resize', scaleChess);
+
   /* ── Init ── */
   board = parseFEN(STARTING_FEN);
   render();
+  scaleChess();
   </script>
 </body>
 </html>
